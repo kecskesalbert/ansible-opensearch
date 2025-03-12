@@ -1,0 +1,49 @@
+{
+  "description": "Full daily snapshot policy",
+  "creation": {
+    "schedule": {
+      "cron": {
+        "expression": "20 01 * * *",
+        "timezone": "UTC"
+      }
+    },
+    "time_limit": "12h"
+  },
+  "deletion": {
+    "schedule": {
+      "cron": {
+        "expression": "15 00 * * *",
+        "timezone": "UTC"
+      }
+    },
+    "condition": {
+      "max_age": "90d",
+      "max_count": 2,
+      "min_count": 1
+    },
+    "time_limit": "1h"
+  },
+  "snapshot_config": {
+    "date_format": "yyyy-MM-dd~HH:mm",
+    "timezone": "UTC",
+    "indices": "*",
+    "repository": "rdg_prod_rw",
+    "ignore_unavailable": "true",
+    "include_global_state": "false",
+    "partial": "true",
+    "metadata": {
+      "any_key": "any_value"
+    }
+  },
+  "notification": {
+    "channel": {
+      "id": "<channel_id>"
+    },
+    "conditions": {
+      "creation": false,
+      "deletion": false,
+      "failure": true,
+      "time_limit_exceeded": true
+    }
+  }
+}

@@ -1,0 +1,91 @@
+---
+- name: OS Main | Debug
+  debug:
+    msg: "{{ {
+      'tags':             ansible_run_tags,
+      'upgrade':          upgrade | default('?'),
+      'force_deployment': force_deployment | default('?'),
+      'force_config':     force_config | default('?'),
+      'force_certificate': force_certificate | default('?'),
+    } | dict2items }}"
+  tags: always
+  run_once: true
+  when: false
+
+- name: Debug
+  include_role:
+    name: common2
+    tasks_from: debug
+
+- name: OS Main | Collect facts
+  ansible.builtin.setup:
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ groups[ 'os_cluster_' + os_cluster_name + '_backend' ] }}"
+  tags: always
+  run_once: true
+  when: hostvars[groups[ 'os_cluster_' + os_cluster_name + '_backend'][0]]['ansible_default_ipv4']['address'] is not defined
+
+- name: OS Main | Include tuning the system settings
+  ansible.builtin.include_tasks:
+    file: tune.yml
+    apply:
+      tags: tune
+  tags: tune
+#  when: not (upgrade | default(false) | bool)
+
+- name: OS Main | Include pre-reboot tasks
+  ansible.builtin.include_role:
+    name: reboot
+    tasks_from: pre-reboot
+    apply:
+      tags: deployment,configuration
+  tags: deployment,configuration
+  when: upgrade | default(false) | bool
+
+- name: OS Main | Include OpenSearch installation
+  ansible.builtin.include_tasks:
+    file: opensearch.yml
+    apply:
+      tags: deployment
+  tags: deployment
+
+- name: OS Main | Include OpenSearch configuration
+  ansible.builtin.include_tasks:
+    file: configuration.yml
+    apply:
+      tags: deployment,configuration
+  tags: configuration
+
+- name: OS Main | Include security index update
+  ansible.builtin.include_tasks:
+    file: security.yml
+    apply:
+      tags: security
+  tags: security
+
+- name: OS Main | Include post-reboot tasks
+  ansible.builtin.include_role:
+    name: reboot
+    tasks_from: post-reboot
+    apply:
+      tags: deployment,configuration
+  tags: deployment,configuration
+  when: upgrade | default(false) | bool
+
+- name: OS Main | Include healthcheck
+  ansible.builtin.include_tasks:
+    file: healthcheck.yml
+    apply:
+      tags: healthcheck
+  tags: deployment,configuration,healthcheck
+  when: not(upgrade | default(false) | bool)
+
+- name: OS Main | Include management tasks
+  ansible.builtin.include_tasks:
+    file: management.yml
+    apply:
+      tags: management
+  tags: management
+  run_once: true
+  when: not(upgrade | default(false) | bool)

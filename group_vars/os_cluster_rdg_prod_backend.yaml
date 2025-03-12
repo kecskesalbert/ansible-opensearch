@@ -1,0 +1,105 @@
+---
+# TODO: this is redundant, can be derived from os_cluster_{{xxx}}_backend hostgroup with ansible-core 2.11+
+os_master_nodes: [ "rdg-os-master-1","rdg-os-master-2","rdg-os-master-3" ]
+
+# opensearch download
+os_download_url: https://artifacts.opensearch.org/releases/bundle/opensearch
+
+# opensearch version
+os_version: "2.18.0"
+
+# DNS suffix for opensearch nodes. Required to configure SSL.
+domain_name: entcorp.com
+
+# LB frontend
+cluster_frontend: https://os-frontend.entcorp.com:443
+
+# Java memory heap value
+java_heap_value: 10G
+
+# opensearch linux user
+os_user: opensearch
+
+# Number of days that certificates are valid
+cert_valid_days: 365
+
+os_home: "/usr/share/opensearch"
+os_api_port: 9200
+data_path: "/opt/opensearch/data/"
+log_path: "/var/log/opensearch/"
+
+root_ca_pem: |
+  -----BEGIN CERTIFICATE-----
+  ...
+  -----END CERTIFICATE-----
+
+root_ca_key: |
+  -----BEGIN PRIVATE KEY-----
+  ...
+  -----END PRIVATE KEY-----
+
+admin_pem: |
+  -----BEGIN CERTIFICATE-----
+  ...
+  -----END CERTIFICATE-----
+
+admin_key: |
+  -----BEGIN PRIVATE KEY-----
+  ...
+  -----END PRIVATE KEY-----
+
+os_ism_policies:
+  - myindex
+
+os_index_templates:
+  - myindex
+
+os_cluster_replication_sources:
+  - ltn_prod
+
+os_cluster_settings: {
+  "persistent": {
+    "cluster": {
+      "remote": {
+        "replicate_from_ltn_prod": {
+          "seeds": ["ltn-os-master-1:9300","ltn-os-master-2:9300","ltn-os-master-3:9300"]
+        }
+      }
+    },
+    "plugins": {
+      "index_state_management": {
+        "history": {
+          "enabled": False,
+          "rollover_retention_period": "7d"
+        }
+      }
+    }
+  }
+}
+
+os_repl_af_rules: [
+   {
+     leader_alias: "replicate_from_ltn_prod",
+     name: "test_rule",
+     pattern: "*",
+     use_roles: {
+        leader_cluster_role: "all_access",
+        follower_cluster_role: "all_access"
+     }
+   }
+]
+
+os_snapshot_repositories:
+  - rdg_prod_rw
+
+os_snapshot_policies:
+  - rdg_daily_backup
+
+os_notifications: []
+
+os_internal_users: {
+  'kibanaserver':       { 'password': 'X9fcgfl13d', 'reserved': true },
+  'admin':              { 'password': 'adminpwd', 'backend_roles': ['admin'] },
+  'replication':        { 'password': 'replicationpwd', 'backend_roles': ['replication'] },
+  'myuser':             { 'password': 'mypassword' }
+}

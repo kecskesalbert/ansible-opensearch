@@ -1,0 +1,35 @@
+---
+- name: Tune host settings | Disable selinux
+  selinux:
+    state: disabled
+  failed_when: false
+
+- name: Tune host settings | Set vm.max_map_count in sysctl.conf
+  sysctl:
+    name: vm.max_map_count
+    value: "262144"
+    state: present
+
+- name: Tune host settings | Set open files limit in sysctl.conf
+  sysctl:
+    name: fs.file-max
+    value: "65536"
+    state: present
+
+- name: Tune host settings | Set hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+  when: false
+
+- name: Tune host settings | Add backend nodes to /etc/hosts
+  blockinfile:
+    dest: /etc/hosts
+    block: |-
+      {% for item in groups[ 'os_cluster_' + os_cluster_name + '_backend' ] %}
+      {{ hostvars[item]['ansible_default_ipv4']['address'] }} {{ item }}.{{ domain_name }} {{ item }}
+      {% endfor %}
+    state: present
+    create: yes
+    backup: yes
+    marker: "# Ansible OS backend hosts {mark}"
+  when: false

@@ -1,0 +1,251 @@
+---
+### Certificates ###
+
+- block:
+
+    - name: OpenSearch Configuration | Check for existing certificates
+      ansible.builtin.stat:
+        path: "{{ os_home }}/config/{{ item }}"
+      register: _os_cert_exists
+      with_items:
+        - root-ca.pem
+        - "{{ inventory_hostname }}.key"
+        - "{{ inventory_hostname }}.pem"
+        - "{{ inventory_hostname }}_http.key"
+        - "{{ inventory_hostname }}_http.pem"
+
+    - name: OpenSearch Configuration | Trigger force_certificate when certificates don't exist
+      set_fact:
+        force_certificate: 1
+      when: not (
+        _os_cert_exists.results[0].stat.exists and
+        _os_cert_exists.results[1].stat.exists and
+        _os_cert_exists.results[2].stat.exists and
+        _os_cert_exists.results[3].stat.exists and
+        _os_cert_exists.results[4].stat.exists
+        )
+
+  when: force_certificate is not defined
+
+## Use searchguard offline TLS tool to create node certificates for Transport & REST API layer
+# Runonce block begin
+- block:
+    - name: OpenSearch Configuration | Wipe local temporary directory for certificates
+      local_action:
+        module: file
+        path: /tmp/opensearch-nodecerts
+        state: absent
+
+    - name: OpenSearch Configuration | Create local temporary directory for certificates
+      ansible.builtin.file:
+        path: /tmp/opensearch-nodecerts
+        state: directory
+
+    - name: OpenSearch Configuration | Download certificate generator tool
+      ansible.builtin.get_url:
+        url: https://maven.search-guard.com/search-guard-tlstool/com/floragunn/search-guard-tlstool/1.9.0/search-guard-tlstool-1.9.0.zip
+        dest: /tmp/opensearch-nodecerts/search-guard-tlstool.tar.gz
+
+    - name: OpenSearch Configuration | Extract the archive file
+      ansible.builtin.unarchive:
+        src: "/tmp/opensearch-nodecerts/search-guard-tlstool.tar.gz"
+        dest: "/tmp/opensearch-nodecerts"
+
+    - name: OpenSearch Configuration | Prepare the certificate generation template
+      template:
+        src: tlsconfig.yml
+        dest: /tmp/opensearch-nodecerts/config/tlsconfig.yml
+
+    - name: Stop for generating new root CA
+      fail:
+        msg: |
+          Stopping for new root CA.
+          Run /tmp/opensearch-nodecerts/tools/sgtlstool.sh -c /tmp/opensearch-nodecerts/config/tlsconfig.yml -ca -t /tmp/opensearch-nodecerts/config/
+          Take /tmp/opensearch-nodecerts/config/root-ca.*
+      when: force_certificate | default(0) | int == 2
+
+    - name: OpenSearch Configuration | Extract root CA key and certificate
+      ansible.builtin.copy:
+        content: "{{ item.var }}"
+        dest: "/tmp/opensearch-nodecerts/config/{{ item.tgt }}"
+      with_items:
+        - { var: "{{ root_ca_key }}", tgt: root-ca.key }
+        - { var: "{{ root_ca_pem }}", tgt: root-ca.pem }
+      no_log: true
+
+    - name: Stop for generating new admin certificate
+      fail:
+        msg: [
+          "Stopping for new admin certificate.",
+          "Run /tmp/opensearch-nodecerts/tools/sgtlstool.sh -c /tmp/opensearch-nodecerts/config/tlsconfig.yml -crt -t /tmp/opensearch-nodecerts/config/",
+          "Take /tmp/opensearch-nodecerts/config/admin.*"
+        ]
+      when: force_certificate | default(0) | int == 3
+
+    - name: OpenSearch Configuration | Generate client certificates
+      ansible.builtin.command:
+        argv: "{{
+            [
+              '/tmp/opensearch-nodecerts/tools/sgtlstool.sh',
+              '-c',
+              '/tmp/opensearch-nodecerts/config/tlsconfig.yml',
+              '-crt',
+              '-t',
+              '/tmp/opensearch-nodecerts/config/'
+            ] }}"
+
+  run_once: true
+  become: false
+  delegate_to: localhost
+  when: force_certificate | default(0) | int > 0
+
+- name: OpenSearch Configuration | Copy the node & admin certificates
+  copy:
+    src: "/tmp/opensearch-nodecerts/config/{{ item }}"
+    dest: "{{ os_home }}/config/"
+    owner: "{{ os_user }}"
+    group: "{{ os_user }}"
+    mode: 0440
+  with_items:
+    - root-ca.pem
+    - "{{ inventory_hostname }}.key"
+    - "{{ inventory_hostname }}.pem"
+    - "{{ inventory_hostname }}_http.key"
+    - "{{ inventory_hostname }}_http.pem"
+  when: force_certificate | default(0) | int > 0
+
+- name: OpenSearch Configuration | Wipe local certificate directory
+  ansible.builtin.file:
+    path: /tmp/opensearch-nodecerts
+    state: absent
+  run_once: true
+  become: false
+  delegate_to: localhost
+  when: force_certificate | default(0) | int > 0
+
+- name: OpenSearch Configuration | Verify certificate expiry
+  ansible.builtin.command: |-
+    openssl x509 -in {{ os_home }}/config/{{ item }} -noout -enddate
+  register: _cert_expiry
+  changed_when: false
+  failed_when: false
+  with_items:
+    - "{{ inventory_hostname }}.pem"
+    - "{{ inventory_hostname }}_http.pem"
+    - "root-ca.pem"
+
+- name: OpenSearch Configuration | Print certificates expiry
+  debug:
+    msg:
+    - "{{ '%-24s' | format(_cert_expiry.results[0].item | default('?')) }}: {{_cert_expiry.results[0].stdout | default('?') }}"
+    - "{{ '%-24s' | format(_cert_expiry.results[1].item | default('?')) }}: {{_cert_expiry.results[1].stdout | default('?') }}"
+    - "{{ '%-24s' | format(_cert_expiry.results[2].item | default('?')) }}: {{_cert_expiry.results[2].stdout | default('?') }}"
+
+
+
+### Main configuration file ###
+
+- name: OpenSearch Configuration | Wipe configuration file
+  ansible.builtin.file:
+    path: "{{ os_home }}/config/opensearch.yml"
+    state: absent
+  when: (force_config | default(false) | bool)
+
+- name: OpenSearch Configuration | Wipe configuration placeholder file
+  ansible.builtin.file:
+    path: "/tmp/opensearch_config_{{ os_cluster_name }}.yml"
+    state: absent
+  changed_when: false
+
+# TODO: this requires ansible-core 2.11+ to work
+- name: OpenSearch Configuration | Find master-eligible nodes
+  set_fact:
+    os_master_nodes: |
+      {{ groups[ 'os_cluster_' + os_cluster_name + '_backend' ]
+        | zip(groups[ 'os_cluster_' + os_cluster_name + '_backend' ]
+            | map('extract', hostvars)
+            | map(attribute='os_roles')
+          )
+        | map('join', '|')
+        | select('search', 'master')
+        | map('split', '|')
+        | flatten
+        | intersect(groups[ 'os_cluster_' + os_cluster_name + '_backend' ])
+      }}
+  when:
+    os_master_nodes is not defined
+  delegate_to: localhost
+  run_once: true
+
+- name: OpenSearch Configuration | Populate configuration placeholder file
+  blockinfile:
+    block: "{{ lookup('template', 'templates/opensearch.yml') }}"
+    dest: "/tmp/opensearch_config_{{ os_cluster_name }}.yml"
+    state: present
+    create: yes
+    marker: "## {mark} opensearch main configuration ##"
+    owner: "{{ os_user }}"
+    group: "{{ os_user }}"
+    mode: 0600
+  changed_when: false
+
+- name: OpenSearch Configuration | Replace main configuration file
+  ansible.builtin.copy:
+    src: "/tmp/opensearch_config_{{ os_cluster_name }}.yml"
+    dest: "{{ os_home }}/config/opensearch.yml"
+    remote_src: true
+    owner: "{{ os_user }}"
+    mode: 0600
+    force: true
+    backup: true
+  register: _os_config_changed
+
+- name: "OpenSearch Configuration | {{ 'Restart' if _os_config_changed.changed else 'Start' }} OpenSearch"
+  systemd:
+    name: opensearch
+    state: "{{ 'restarted' if _os_config_changed.changed else 'started' }}"
+    enabled: yes
+
+# During upgrade, shard allocation is disabled, which blocks cluster green state
+- name: OpenSearch Configuration | Re-enable shard allocation
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}:{{os_api_port}}/_cluster/settings"
+    user: 'admin'
+    password: "{{ os_internal_users['admin'].password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    headers: {
+        'Content-Type': 'application/json'
+    }
+    method: PUT
+    body: |-
+      { "transient":
+        {
+          "cluster.routing.allocation.enable": "all"
+        }
+      }
+  register: _os_status
+  delegate_to: localhost
+  until:
+    - _os_status.json is defined
+    - _os_status.status == 200
+  retries: 60
+  delay: 5
+  when: upgrade | default(false) | bool
+
+- name: OpenSearch Configuration | Use demo users
+  set_fact:
+    hc_username: admin
+    hc_password: admin
+  when:
+    use_demo_user | default(false) | bool
+
+- name: OpenSearch Configuration | Run healthcheck
+  include_tasks: healthcheck.yml
+
+- name: OpenSearch Configuration | Revert using demo users
+  set_fact:
+    hc_username: ''
+    hc_password: ''
+  when:
+    use_demo_user | default(false) | bool

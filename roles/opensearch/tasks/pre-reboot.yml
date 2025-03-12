@@ -1,0 +1,41 @@
+---
+- name: OpenSearch pre-reboot | Find out cluster name
+  set_fact:
+    hc_cluster_name: >-
+      {{ group_names | join(',') | regex_findall('os_cluster_(\w+)_backend') | first }}
+
+- name: OpenSearch pre-reboot | Sanity check
+  fail:
+    msg: "Host doesn't look like an OpenSearch backend"
+  when: hc_cluster_name is not defined or hc_cluster_name == ''
+
+- name: "OpenSearch pre-reboot {{ hc_cluster_name }} | Include variables"
+  include_vars:
+    file: "group_vars/os_cluster_{{ hc_cluster_name }}_backend.yaml"
+    name: hc
+
+- name: "OpenSearch pre-reboot {{ hc_cluster_name }} | Disable shard allocation"
+  ansible.builtin.uri:
+    url: "{{ cluster_frontend }}/_cluster/settings"
+    user: 'admin'
+    password: "{{ hc.os_internal_users['admin'].password }}"
+    force_basic_auth: yes
+    validate_certs: no
+    headers: {
+        'Content-Type': 'application/json'
+    }
+    method: PUT
+    body: |-
+      { "transient":
+        {
+          "cluster.routing.rebalance.enable": "none",
+          "cluster.routing.allocation.enable": "primaries"
+        }
+      }
+  register: _os_status
+  delegate_to: localhost
+  until:
+    - _os_status.json is defined
+    - _os_status.status == 200
+  retries: 60
+  delay: 5

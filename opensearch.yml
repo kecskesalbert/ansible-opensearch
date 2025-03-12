@@ -1,0 +1,9 @@
+---
+- name: opensearch core installation & configuration
+  hosts: "os_cluster_{{ os_cluster_name }}_backend"
+  serial: "{{ use_serial | default('100%') }}"
+  gather_facts: false
+    use_serial: |-
+      {{ (upgrade | default(false) | bool) }}
+  roles:
+    - { role: opensearch }

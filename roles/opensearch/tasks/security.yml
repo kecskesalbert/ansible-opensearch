@@ -1,0 +1,109 @@
+---
+
+- block:
+
+    - name: OpenSearch Security | Hash internal users password
+      include_tasks: hash_password.yml
+      with_dict: "{{ os_internal_users }}"
+      loop_control:
+        loop_var: 'username'
+      run_once: true
+      when: false
+      no_log: true
+
+    - name: OpenSearch Security | Create security plugin configuration folder
+      file:
+        dest: "{{ os_home }}/config/opensearch-security"
+        owner: "{{ os_user }}"
+        group: "{{ os_user }}"
+        mode: 0550
+        state: directory
+
+    - name: OpenSearch Security | Copy the security plugin configuration file
+      template:
+        src: security_plugin_conf.yml
+        dest: "{{ os_home }}/config/opensearch-security/config.yml"
+        backup: yes
+        owner: "{{ os_user }}"
+        group: "{{ os_user }}"
+        mode: 0440
+        force: yes
+
+    - name: OpenSearch Security | Copy custom configuration files to cluster
+      template:
+        src: "{{ item }}"
+        dest: "{{ os_home }}/config/opensearch-security/"
+        owner: "{{ os_user }}"
+        group: "{{ os_user }}"
+        mode: 0440
+        force: yes
+      with_items:
+        - action_groups.yml
+        - internal_users.yml
+        - nodes_dn.yml
+        - roles_mapping.yml
+        - roles.yml
+        - tenants.yml
+        - whitelist.yml
+
+    # Hashed passwords are written for all users, replacing values
+    - name: OpenSearch Security | Set passwords for all users from custom config
+      shell: >
+        sed -i '/hash: / s,{{ item.value.password }},'$(bash {{ os_home }}/plugins/opensearch-security/tools/hash.sh -p {{ item.value.password }} | tail -1)','
+        {{ os_home }}/config/opensearch-security/internal_users.yml
+      environment:
+        JAVA_HOME: "{{ os_home }}/jdk"
+      no_log: true
+      with_dict: "{{ os_internal_users }}"
+      changed_when: false
+
+    - name: OpenSearch Security | Extract admin key and certificate
+      ansible.builtin.copy:
+        content: "{{ item.var }}"
+        dest: "{{ os_home }}/config/{{ item.tgt }}"
+      with_items:
+        - { var: "{{ admin_key }}", tgt: admin.key }
+        - { var: "{{ admin_pem }}", tgt: admin.pem }
+      no_log: true
+      changed_when: false
+
+    # Security plugin configuration is run on 1st (master) node only
+    - name: OpenSearch Security | Overwrite the security index with our configs
+      shell: >
+        bash {{ os_home }}/plugins/opensearch-security/tools/securityadmin.sh
+        -cacert {{ os_home }}/config/root-ca.pem
+        -cert {{ os_home }}/config/admin.pem
+        -key {{ os_home }}/config/admin.key
+        -nhnv -icl
+        -h {{ ansible_default_ipv4.address }}
+        -cd {{ os_home }}/config/opensearch-security/
+      environment:
+        JAVA_HOME: "{{ os_home }}/jdk"
+
+  run_once: true
+
+
+# Once the security index got initialized, there's no need for the admin key
+- name: OpenSearch Security | Wipe admin key & certificate
+  ansible.builtin.file:
+    path: "{{ os_home }}/config/{{ item }}"
+    state: absent
+  changed_when: false
+  with_items:
+    - admin.key
+    - admin.pem
+
+# Once the security index got initialized, there's no need for the security config files.
+- name: OpenSearch Security | Remove security plugin configuration files
+  ansible.builtin.file:
+    path: "{{ os_home }}/config/opensearch-security/{{ item | basename }}"
+    state: absent
+  with_items:
+    - action_groups.yml
+    - internal_users.yml
+    - nodes_dn.yml
+    - roles_mapping.yml
+    - roles.yml
+    - tenants.yml
+    - whitelist.yml
+  changed_when: false

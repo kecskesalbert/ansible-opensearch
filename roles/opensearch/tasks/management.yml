@@ -1,0 +1,291 @@
+---
+
+# Snapshot repositories
+- block:
+
+  - name: OpenSearch management | Get all snapshot repositories
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_snapshot"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: GET
+    delegate_to: localhost
+    register: _os_snapshot_repositories
+
+  - name: OpenSearch management | Delete unmanaged snapshot repositories
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_snapshot/{{ item }}"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: DELETE
+    with_items: >
+      {{
+        _os_snapshot_repositories.json.keys() |
+        list |
+        difference(os_snapshot_repositories)
+      }}
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  - name: OpenSearch management | Add/Update snapshot repositories
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_snapshot/{{ item }}"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: PUT
+      body: "{{ lookup('file', 'roles/opensearch/vars/snapshot_repositories/' + item + '.json') }}"
+      body_format: json
+      status_code: [200, 201]
+    with_items: "{{ os_snapshot_repositories }}"
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  when:
+    - os_snapshot_repositories is defined
+    - os_snapshot_repositories is iterable
+    - os_snapshot_repositories | length > 0
+
+# Snapshot management policies
+# To update instead of delete and recreate, we'd need to supply seq_no and if_primary_term params
+- block:
+
+  - name: OpenSearch management | Get all snapshot policies
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_plugins/_sm/policies"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: GET
+    delegate_to: localhost
+    register: _os_sm_policies
+
+  - debug:
+      var: _os_sm_policies
+
+  # OS weirdly registers SM policy with a -sm-policy suffix in the name, so we need to strip it
+  - name: OpenSearch management | Remove all snapshot policies
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_plugins/_sm/policies/{{ item }}"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      return_content: true
+      method: DELETE
+    with_items: >
+      {{
+        _os_sm_policies.json.policies |
+        map(attribute='_id') |
+        map('regex_replace','^(?P<name>.*)-sm-policy$', '\g<name>') |
+        list
+      }}
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  - name: OpenSearch management | Add managed snapshot policies
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_plugins/_sm/policies/{{ item }}"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: POST
+      body: "{{ lookup('file', 'roles/opensearch/vars/snapshot_policies/' + item + '.json') }}"
+      body_format: json
+      status_code: [200, 201]
+    with_items: "{{ os_snapshot_policies }}"
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  when:
+    - os_snapshot_policies is defined
+    - os_snapshot_policies is iterable
+    - os_snapshot_policies | length > 0
+
+# ISM policies
+- block:
+
+  - name: OpenSearch management | Get all ISM policies
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_plugins/_ism/policies"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: GET
+    delegate_to: localhost
+    register: _os_ism_policies
+
+  - debug:
+      var: _os_ism_policies.msg
+
+  - name: OpenSearch management | Remove all ISM policies
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_plugins/_ism/policies/{{ item }}"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      return_content: true
+      method: DELETE
+    with_items: "{{  _os_ism_policies.json.policies | map(attribute='_id') | list }}"
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  - name: OpenSearch management | Add managed ISM policies
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_plugins/_ism/policies/{{ item }}"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: PUT
+      body: "{{ lookup('file', 'roles/opensearch/vars/ism_policies/' + item + '.json') }}"
+      body_format: json
+      status_code: [200, 201]
+    with_items: "{{ os_ism_policies }}"
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  when:
+    - os_ism_policies is defined
+    - os_ism_policies is iterable
+    - os_ism_policies | length > 0
+
+# Cluster settings
+- block:
+
+  - name: OpenSearch management | Add cluster settings
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_cluster/settings"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: PUT
+      body: "{{ os_cluster_settings }}"
+      body_format: json
+      status_code: [200, 201]
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  when: os_cluster_settings is defined
+
+
+# Replication settings
+- block:
+  - name: Remove replication settings
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_plugins/_replication/_autofollow"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: DELETE
+      body: "{{ item }}"
+      body_format: json
+    with_items: "{{ os_repl_af_rules_delete }}"
+    delegate_to: localhost
+    register: _os_uri_results
+    failed_when: false
+
+  - name: OpenSearch management | Add replication settings
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_plugins/_replication/_autofollow"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: POST
+      body: "{{ item }}"
+      body_format: json
+    with_items: "{{ os_repl_af_rules }}"
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  when:
+    - os_repl_af_rules is defined
+    - os_repl_af_rules is iterable
+    - os_repl_af_rules | length > 0
+
+# Index templates
+- block:
+
+  - name: OpenSearch management | Get all index templates
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_index_template"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: GET
+    delegate_to: localhost
+    register: _os_index_templates
+
+  - name: OpenSearch management | Delete unmanaged index templates
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_index_template/{{ item }}"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: DELETE
+    with_items: "{{ _os_index_templates.json.index_templates | map(attribute='name') | list | difference(os_index_templates) }}"
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  - name: OpenSearch management | Add/Update managed index templates
+    ansible.builtin.uri:
+      url: "https://{{ inventory_hostname }}:{{os_api_port}}/_index_template/{{ item }}"
+      user: 'admin'
+      password: "{{ os_internal_users['admin'].password }}"
+      force_basic_auth: yes
+      validate_certs: no
+      method: PUT
+      body: "{{ lookup('file', 'roles/opensearch/vars/index_templates/' + item + '.json') }}"
+      body_format: json
+    with_items: "{{ os_index_templates }}"
+    delegate_to: localhost
+    register: _os_uri_results
+
+  - debug:
+      var: _os_uri_results.msg
+
+  when:
+    - os_index_templates is defined
+    - os_index_templates is iterable
+    - os_index_templates | length > 0

@@ -1,0 +1,56 @@
+cluster.name: "{{ os_cluster_name }}"
+node.name: "{{ inventory_hostname }}"
+network.host: "{{ ansible_default_ipv4.address }}"
+http.port: "{{ os_api_port }}"
+bootstrap.memory_lock: true
+discovery.seed_hosts: ["{{ groups[ 'os_cluster_' + os_cluster_name + '_backend' ] | join('\",\"') }}"]
+cluster.initial_cluster_manager_nodes: [ "{{ os_master_nodes | join('\",\"') }}" ]
+
+node.roles: [{{ os_roles }}]
+{% if os_node_attr is defined %}
+{% for item in os_node_attr | from_yaml | dict2items %}
+node.attr.{{ item.key }}: {{ item.value }}
+{% endfor %}
+{% endif %}
+
+path.data: "{{ data_path }}"
+path.logs: "{{ log_path }}"
+path.repo: [
+    "/mnt/os_backup_rdg/"
+]
+
+plugins.security.allow_default_init_securityindex: true
+# plugins.security.audit.type: internal_opensearch
+plugins.security.enable_snapshot_restore_privilege: true
+plugins.security.check_snapshot_restore_write_privileges: true
+plugins.security.restapi.roles_enabled: ["all_access", "security_rest_api_access"]
+
+# SSL configuration
+plugins.security.ssl.transport.pemcert_filepath: {{ inventory_hostname }}.pem
+plugins.security.ssl.transport.pemkey_filepath: {{ inventory_hostname }}.key
+plugins.security.ssl.transport.pemtrustedcas_filepath: root-ca.pem
+plugins.security.ssl.transport.enforce_hostname_verification: false
+plugins.security.ssl.transport.resolve_hostname: false
+
+plugins.security.ssl.http.enabled: true
+plugins.security.ssl.http.pemcert_filepath: {{ inventory_hostname }}_http.pem
+plugins.security.ssl.http.pemkey_filepath: {{ inventory_hostname }}_http.key
+plugins.security.ssl.http.pemtrustedcas_filepath: root-ca.pem
+
+plugins.security.nodes_dn:
+# Our own nodes
+{% for item in groups['os_cluster_' + os_cluster_name + '_backend'] %}
+- CN={{ item }}.{{ domain_name }},OU=Ops,O={{ domain_name }}\, Inc.,DC={{ domain_name }}
+{% endfor %}
+
+{% if os_cluster_replication_sources is defined %}
+# Cluster replication source nodes
+{% for guest_cluster in os_cluster_replication_sources %}
+{% for node in groups['os_cluster_' + guest_cluster + '_backend'] %}
+- CN={{ node }}.{{ domain_name }},OU=Ops,O={{ domain_name }}\, Inc.,DC={{ domain_name }}
+{% endfor %}
+{% endfor %}
+{% endif %}
+
+plugins.security.authcz.admin_dn:
+- CN=admin.{{ domain_name }},OU=Ops,O={{ domain_name }}\, Inc.,DC={{ domain_name }}

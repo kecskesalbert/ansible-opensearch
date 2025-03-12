@@ -1,0 +1,54 @@
+---
+- name: OpenSearch healthcheck | Find out cluster name
+  set_fact:
+    hc_cluster_name: >-
+      {{ group_names | join(',') | regex_findall('os_cluster_(\w+)_backend') | first }}
+
+- name: "OpenSearch healthcheck {{ hc_cluster_name | default(os_cluster_name) }} | Include variables"
+  include_vars:
+    file: "group_vars/os_cluster_{{ hc_cluster_name | default(os_cluster_name) }}_backend.yaml"
+    name: hc
+
+- name: "OpenSearch healthcheck | Wait for port {{ hc.os_api_port }}"
+  wait_for:
+    host: "{{ inventory_hostname }}"
+    port: "{{ hc.os_api_port }}"
+
+- name: "OpenSearch healthcheck | Check the cluster health"
+  ansible.builtin.uri:
+    url: "{{ cluster_frontend }}/_cluster/health"
+    user: "{{ hc_username is defined | ternary(hc_username,'admin') }}"
+    password: "{{ hc_password is defined | ternary(hc_password,hc.os_internal_users['admin'].password) }}"
+    force_basic_auth: yes
+    validate_certs: no
+    return_content: true
+  register: _os_status
+  delegate_to: localhost
+  until:
+    - _os_status.json is defined
+    - _os_status.json.status == 'green'
+    - _os_status.json.number_of_nodes == groups[ 'os_cluster_' + hc_cluster_name | default(os_cluster_name) + '_backend' ] | length
+  retries: 150
+  delay: 5
+
+- name: "OpenSearch healthcheck | Show the cluster health"
+  debug:
+    msg: "{{ _os_status.json | default(_os_status.msg.split('\n')) | default('?') }}"
+
+- name:  "OpenSearch healthcheck | Check the cluster nodes"
+  ansible.builtin.uri:
+    url: "{{ cluster_frontend }}/_cat/nodes?v"
+    user: "{{ hc_username is defined | ternary(hc_username,'admin') }}"
+    password: "{{ hc_password is defined | ternary(hc_password,hc.os_internal_users['admin'].password) }}"
+    force_basic_auth: yes
+    validate_certs: no
+    status_code: [200, 503]
+    return_content: true
+  register: _os_roles
+  delegate_to: localhost
+  run_once: true
+
+- name: "OpenSearch healthcheck | Show the cluster nodes"
+  debug:
+    msg: "{{ _os_roles.content.split('\n') | default(_os_roles.msg.split('\n')) | default('?') }}"
+  run_once: true

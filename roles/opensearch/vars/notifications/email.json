@@ -1,0 +1,33 @@
+{
+  "config_id": "<mailer_id>",
+  "config": {
+    "name": "os_mailer",
+    "description": "",
+    "config_type": "smtp_account",
+    "is_enabled": true,
+    "smtp_account": {
+      "host": "localhost",
+      "port": 25,
+      "method": "none",
+      "from_address": "os_mailer@nuvolaservices.net"
+    }
+  }
+},
+{
+  "config_id": "<...>",
+  "config": {
+    "name": "admin-email",
+    "description": "",
+    "config_type": "email",
+    "is_enabled": true,
+    "email": {
+      "email_account_id": "<mailer_id>",
+      "recipient_list": [
+        {
+          "recipient": "recipient.name@entcorp.com"
+        }
+      ],
+      "email_group_id_list": []
+    }
+  }
+}

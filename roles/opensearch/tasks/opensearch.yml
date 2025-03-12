@@ -1,0 +1,98 @@
+---
+- name: OpenSearch Deployment | Sanity check
+  fail:
+    msg: "os_home is not defined"
+  tags: always
+  when: os_home is not defined or os_home == ""
+
+- block:
+    - name: OpenSearch Deployment | Stop service
+      service:
+        name: opensearch
+        state: stopped
+      failed_when: false
+
+    - name: OpenSearch Deployment | Remove existing deployment
+      file:
+        state: absent
+        path: "{{ os_home }}"
+      failed_when: false
+
+  when: force_deployment | default(false) | bool
+
+- name: OpenSearch Deployment | Check for existing deployment
+  ansible.builtin.stat:
+    path: "{{ os_home }}/bin/opensearch"
+  register: _os_binary_exists
+
+- block:
+
+    - name: OpenSearch Deployment | Check for downloaded package file
+      delegate_to: localhost
+      ansible.builtin.stat:
+        path: "/tmp/opensearch-{{ os_version }}-linux-x64.tar.gz"
+      register: _download_exists
+
+    - name: OpenSearch Deployment | Download opensearch {{ os_version }} package
+      delegate_to: localhost
+      run_once: true
+      get_url:
+        url: "{{ os_download_url }}/{{ os_version }}/opensearch-{{ os_version }}-linux-x64.tar.gz"
+        dest: "/tmp/"
+      when: not _download_exists.stat.exists
+
+    # TODO: this always triggers CHANGED for unknown reason
+    - name: OpenSearch Deployment | Create opensearch user
+      ansible.builtin.user:
+        name: "{{ os_user }}"
+        state: present
+        shell: /bin/false
+        create_home: true
+        home: "{{ os_home }}"
+
+    - name: OpenSearch Deployment | Create directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ os_user }}"
+        group: "{{ os_user }}"
+      with_items:
+        - "{{ os_home }}"
+        - "{{ data_path }}"
+        - "{{ log_path }}"
+
+    - name: OpenSearch Deployment | Create systemd service
+      template:
+        src: opensearch.service
+        dest: "{{ systemctl_path }}/opensearch.service"
+
+    - name: OpenSearch Install | Extract the archive file
+      ansible.builtin.unarchive:
+        src: "/tmp/opensearch-{{ os_version }}-linux-x64.tar.gz"
+        dest: "{{ os_home }}"
+        extra_opts: ['--strip-components=1']
+
+    - name: OpenSearch Deployment | Set file ownerships
+      file:
+        dest: "{{ os_home }}"
+        owner: "{{ os_user }}"
+        group: "{{ os_user }}"
+        recurse: yes
+
+    - name: OpenSearch Deployment | Set config folder permission
+      file:
+        dest: "{{ os_home }}/config"
+        owner: "{{ os_user }}"
+        group: "{{ os_user }}"
+        mode: 0700
+
+    - name: OpenSearch Deployment | Copy jvm.options File for Instance
+      template:
+        src: jvm.options
+        dest: "{{ os_home }}/config/jvm.options"
+        owner: "{{ os_user }}"
+        group: "{{ os_user }}"
+        mode: 0600
+        force: yes
+
+  when: not (_os_binary_exists.stat.exists | default(false) | bool)

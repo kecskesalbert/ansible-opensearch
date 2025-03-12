@@ -1,0 +1,18 @@
+---
+# This is the internal user database
+# The hash value is a bcrypt hash and can be generated with {opensearch_install_dir}/plugins/opensearch-security/tools/hash.sh
+
+_meta:
+  type: "internalusers"
+  config_version: 2
+
+# Define your internal users here
+{% for user in os_internal_users | dict2items -%}
+{{ user.key }}:
+  {% for userkey in user.value | dict2items -%}
+    {% if userkey.key != 'password' %}{{ userkey.key }}{% else %}hash{% endif %}: {{ userkey.value }}{% raw %}
+{% endraw %}
+  {% endfor -%}
+{% raw %}
+{% endraw %}
+{% endfor -%}
